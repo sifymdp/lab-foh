@@ -5,6 +5,7 @@
 import type {
   AuthUser,
   CameraRoiSuggestion,
+  CameraSnapshotAnalysis,
   CreateTablePayload,
   CreateUserPayload,
   DiningSession,
@@ -19,7 +20,7 @@ import type {
 import { humanizeApiError } from '../lib/apiErrors'
 import * as mock from '../mock/store'
 
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
+const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 type ApiSection = {
@@ -28,6 +29,24 @@ type ApiSection = {
   color: string
   bounds?: RectBounds
   points?: { x: number; y: number }[]
+  description?: string
+  outdoors?: boolean
+  smokingAllowed?: boolean
+}
+
+type ApiFloorLabel = Floor['labels'][number]
+
+type ApiFloorPayload = Omit<Floor, 'sections'> & {
+  sections: Array<{
+    id: string
+    name: string
+    color: string
+    points: { x: number; y: number }[]
+    description?: string
+    outdoors?: boolean
+    smokingAllowed?: boolean
+  }>
+  labels: ApiFloorLabel[]
 }
 
 function pointsToBounds(points: { x: number; y: number }[]): RectBounds {
@@ -43,6 +62,16 @@ function pointsToBounds(points: { x: number; y: number }[]): RectBounds {
   }
 }
 
+function boundsToPoints(bounds: RectBounds): { x: number; y: number }[] {
+  const { x, y, width, height } = bounds
+  return [
+    { x, y },
+    { x: x + width, y },
+    { x: x + width, y: y + height },
+    { x, y: y + height },
+  ]
+}
+
 function normalizeFloor(floor: Floor & { sections?: ApiSection[] }): Floor {
   return {
     ...floor,
@@ -53,8 +82,27 @@ function normalizeFloor(floor: Floor & { sections?: ApiSection[] }): Floor {
         name: sec.name,
         color: sec.color,
         bounds: sec.bounds ?? (sec.points?.length ? pointsToBounds(sec.points) : { x: 0, y: 0, width: 100, height: 100 }),
+        description: sec.description,
+        outdoors: sec.outdoors,
+        smokingAllowed: sec.smokingAllowed,
       }
     }),
+  }
+}
+
+function toApiFloorPayload(floor: Floor): ApiFloorPayload {
+  return {
+    ...floor,
+    sections: floor.sections.map((section) => ({
+      id: section.id,
+      name: section.name,
+      color: section.color,
+      points: boundsToPoints(section.bounds),
+      description: section.description,
+      outdoors: section.outdoors,
+      smokingAllowed: section.smokingAllowed,
+    })),
+    labels: floor.labels,
   }
 }
 
@@ -118,7 +166,7 @@ export const api = {
     if (USE_MOCK) return mock.mockUpdateFloor(floor)
     return apiFetch<Floor & { sections?: ApiSection[] }>('/floors/current', {
       method: 'PUT',
-      body: JSON.stringify(floor),
+      body: JSON.stringify(toApiFloorPayload(floor)),
     }).then(normalizeFloor)
   },
 
@@ -235,6 +283,14 @@ export const api = {
     if (USE_MOCK) return mock.mockAutoDetectCameraRoi(tableId)
     return apiFetch<CameraRoiSuggestion>(`/tables/${tableId}/camera/auto-roi`, {
       method: 'POST',
+    })
+  },
+
+  async analyzeCameraSnapshot(tableId: string, roiCoords?: RectBounds | null): Promise<CameraSnapshotAnalysis> {
+    if (USE_MOCK) return mock.mockAnalyzeCameraSnapshot(tableId, roiCoords)
+    return apiFetch<CameraSnapshotAnalysis>(`/tables/${tableId}/camera/analyze-snapshot`, {
+      method: 'POST',
+      body: JSON.stringify({ roiCoords: roiCoords ?? null }),
     })
   },
 }

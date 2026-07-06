@@ -11,7 +11,7 @@ interface SocketContextValue {
 }
 
 const SocketContext = createContext<SocketContextValue | null>(null)
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
+const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 const SOCKET_URL = (import.meta.env.VITE_SOCKET_URL ?? 'http://localhost:8000').replace('http', 'ws')
 
 export function SocketProvider({ children }: { children: ReactNode }) {

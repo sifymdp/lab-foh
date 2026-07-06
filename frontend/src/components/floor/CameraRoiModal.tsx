@@ -172,11 +172,16 @@ export function CameraRoiModal({ table, onClose }: CameraRoiModalProps) {
     const frame = imageFrameRef.current
     if (!frame || !naturalSize) return
     const rect = frame.getBoundingClientRect()
-    const frameWidth = rect.width
-    const frameHeight = rect.height
+    // Map pointer position into display space (displayWidth x displayHeight)
+    // so lasso points, the SVG overlay, and the saved box all share one
+    // coordinate system even when the container renders smaller on screen.
+    const frameWidth = displayWidth
+    const frameHeight = displayHeight
+    const toDisplayX = frameWidth / Math.max(rect.width, 1)
+    const toDisplayY = frameHeight / Math.max(rect.height, 1)
     const nextPoint = {
-      x: clamp(clientX - rect.left, 0, frameWidth),
-      y: clamp(clientY - rect.top, 0, frameHeight),
+      x: clamp((clientX - rect.left) * toDisplayX, 0, frameWidth),
+      y: clamp((clientY - rect.top) * toDisplayY, 0, frameHeight),
     }
     setLassoPoints((current) => {
       const previous = current[current.length - 1]
@@ -241,20 +246,19 @@ export function CameraRoiModal({ table, onClose }: CameraRoiModalProps) {
       setSnapshotError('Draw a lasso around the table before saving the ROI.')
       return
     }
-    const frame = imageFrameRef.current
-    const renderedWidth = frame?.getBoundingClientRect().width || displayWidth
     setSavingRoi(true)
     setSnapshotError(null)
     try {
-      // Convert from displayed pixels back to real camera-frame pixels before saving —
-      // this is the coordinate space the backend's crop_roi() actually works in.
-      const scale = naturalSize.width / renderedWidth
+      // Convert from display-space pixels back to real camera-frame pixels
+      // before saving — the backend matches detections in that raw space.
+      const scaleX = naturalSize.width / displayWidth
+      const scaleY = naturalSize.height / Math.max(displayHeight, 1)
       const currentBox = boxRef.current
       const realRoi: RectBounds = {
-        x: Math.round(currentBox.x * scale),
-        y: Math.round(currentBox.y * scale),
-        width: Math.round(currentBox.width * scale),
-        height: Math.round(currentBox.height * scale),
+        x: Math.round(currentBox.x * scaleX),
+        y: Math.round(currentBox.y * scaleY),
+        width: Math.round(currentBox.width * scaleX),
+        height: Math.round(currentBox.height * scaleY),
       }
       await updateTable(table.id, { roiCoords: realRoi })
       await refresh()

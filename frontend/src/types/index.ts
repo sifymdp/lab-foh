@@ -42,6 +42,9 @@ export interface Section {
   name: string
   color: string
   bounds: RectBounds
+  description?: string
+  outdoors?: boolean
+  smokingAllowed?: boolean
 }
 
 export interface FloorLabel {
@@ -76,6 +79,22 @@ export interface CameraRoiSuggestion {
   confidence: number
   roiCoords: RectBounds
   candidates: RectBounds[]
+}
+
+export interface CameraSceneDetection {
+  label: 'clean' | 'dirty' | 'occupied'
+  confidence: number
+  bounds: RectBounds
+}
+
+export interface CameraSnapshotAnalysis {
+  frameWidth: number
+  frameHeight: number
+  roiUsed?: RectBounds | null
+  roiLabel?: 'clean' | 'dirty' | 'occupied' | null
+  roiConfidence?: number | null
+  sceneSummary: Record<'clean' | 'dirty' | 'occupied', number>
+  sceneDetections: CameraSceneDetection[]
 }
 
 export interface DiningSession {

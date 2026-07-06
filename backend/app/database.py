@@ -31,6 +31,9 @@ def migrate_schema() -> None:
             )
         if "cleaning_started_at" not in col_names:
             alters.append("ALTER TABLE tables ADD COLUMN cleaning_started_at VARCHAR(32)")
+        for flag in ("dirty_alert_sent", "dirty_escalated", "departure_alert_sent"):
+            if flag not in col_names:
+                alters.append(f"ALTER TABLE tables ADD COLUMN {flag} BOOLEAN DEFAULT 0")
         for sql in alters:
             conn.execute(text(sql))
         conn.commit()

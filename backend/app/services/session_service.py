@@ -8,7 +8,13 @@ from app.core.ids import new_id
 from app.core.status_machine import ACTIVE_SESSION_STATUSES
 from app.models import CleaningEvent, DiningSession, Table
 from app.schemas.session import DiningSessionOut, SeatGuestIn
-from app.services.table_service import active_session_for_table, get_table, record_history, _emit_table_updated
+from app.services.table_service import (
+    _emit_table_updated,
+    _on_status_change,
+    active_session_for_table,
+    get_table,
+    record_history,
+)
 from app.socket_manager import sio
 
 
@@ -86,9 +92,8 @@ def close_session(db: Session, session_id: str, user_id: str | None) -> DiningSe
     if table:
         old = table.status
         table.status = "CLEANING"
-        table.cleaning_started_at = now.isoformat().replace("+00:00", "Z")
-        table.consecutive_person_scans = 0
-        table.consecutive_empty_scans = 0
+        # resets counters + alert flags and stamps cleaning_started_at
+        _on_status_change(table, old, "CLEANING")
         record_history(db, table.id, old, "CLEANING", user_id, session.id)
         db.add(
             CleaningEvent(

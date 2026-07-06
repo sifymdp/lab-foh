@@ -8,12 +8,19 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.core import camera_utils
+from app.core.yolo_models import detect_table_state_consensus, iter_full_frame_detections
 from app.core.deps import get_current_user, require_floor_editor
+from app.core.ids import new_id
 from app.database import get_db
 from app.models import TableQRCode
 from app.models.user import User
 from app.schemas.floor import CreateTableIn, StatusPatchIn, TableOut, TablePatchIn
-from app.schemas.roi import CameraRoiSuggestionOut
+from app.schemas.roi import (
+    CameraRoiSuggestionOut,
+    CameraSceneDetectionOut,
+    CameraSnapshotAnalysisIn,
+    CameraSnapshotAnalysisOut,
+)
 from app.services.roi_autodetect import suggest_camera_roi
 from app.services import table_service
 
@@ -22,6 +29,58 @@ router = APIRouter(prefix="/tables", tags=["tables"])
 # Directory where uploaded camera videos are stored
 CAMERA_UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "camera_uploads"
 CAMERA_UPLOADS_DIR.mkdir(exist_ok=True)
+
+
+def _roi_to_ints(roi: dict | None) -> dict[str, int] | None:
+    if roi is None:
+        return None
+    return {
+        "x": int(round(roi["x"])),
+        "y": int(round(roi["y"])),
+        "width": int(round(roi["width"])),
+        "height": int(round(roi["height"])),
+    }
+
+
+def _intersection_area(a: dict[str, int], b: dict[str, int]) -> int:
+    left = max(a["x"], b["x"])
+    top = max(a["y"], b["y"])
+    right = min(a["x"] + a["width"], b["x"] + b["width"])
+    bottom = min(a["y"] + a["height"], b["y"] + b["height"])
+    if right <= left or bottom <= top:
+        return 0
+    return (right - left) * (bottom - top)
+
+
+def _resolve_roi_label_from_scene(
+    roi: dict[str, int] | None,
+    scene_detections: list[CameraSceneDetectionOut],
+) -> tuple[str | None, float | None]:
+    if roi is None:
+        return None, None
+
+    roi_area = max(roi["width"] * roi["height"], 1)
+    best_label: str | None = None
+    best_score = 0.0
+    best_confidence: float | None = None
+
+    for detection in scene_detections:
+        bounds = {
+            "x": int(round(detection.bounds.x)),
+            "y": int(round(detection.bounds.y)),
+            "width": int(round(detection.bounds.width)),
+            "height": int(round(detection.bounds.height)),
+        }
+        overlap_ratio = _intersection_area(roi, bounds) / roi_area
+        if overlap_ratio < 0.18:
+            continue
+        score = overlap_ratio * float(detection.confidence)
+        if score > best_score:
+            best_score = score
+            best_label = detection.label
+            best_confidence = float(detection.confidence)
+
+    return best_label, best_confidence
 
 
 @router.get("/{table_id}/qr")
@@ -88,6 +147,89 @@ def auto_roi_suggestion(
     return CameraRoiSuggestionOut(**suggestion)
 
 
+@router.post("/{table_id}/camera/analyze-snapshot", response_model=CameraSnapshotAnalysisOut)
+def analyze_camera_snapshot(
+    table_id: str,
+    body: CameraSnapshotAnalysisIn,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_floor_editor),
+) -> CameraSnapshotAnalysisOut:
+    """Run table-state analysis on one captured snapshot.
+
+    Uses the caller-provided ROI when present so the setup page can preview
+    draft lassos before saving, while still returning a whole-scene summary.
+    """
+    table = table_service.get_table(db, table_id)
+    if not table.camera_url:
+        raise HTTPException(404, "This table has no camera_url configured yet")
+
+    frames = camera_utils.capture_frame_sequence(
+        table.camera_url,
+        sample_frames=settings.table_state_sample_frames,
+        frame_stride=settings.table_state_sample_stride,
+    )
+    if not frames:
+        raise HTTPException(502, "Could not read a frame from that camera_url")
+
+    frame = frames[-1]
+    frame_height, frame_width = frame.shape[:2]
+    roi_used = _roi_to_ints(
+        body.roi_coords.model_dump() if body.roi_coords is not None else camera_utils.parse_roi(table.roi_coords)
+    )
+
+    scene_detections = []
+    scene_summary = {"clean": 0, "dirty": 0, "occupied": 0}
+    for x1, y1, x2, y2, detection in iter_full_frame_detections(frame):
+        scene_summary[detection.label] = scene_summary.get(detection.label, 0) + 1
+        scene_detections.append(
+            CameraSceneDetectionOut(
+                label=detection.label,
+                confidence=detection.confidence,
+                bounds={
+                    "x": x1,
+                    "y": y1,
+                    "width": max(x2 - x1, 1),
+                    "height": max(y2 - y1, 1),
+                },
+            )
+        )
+
+    roi_label: str | None = None
+    roi_confidence: float | None = None
+    if roi_used is not None:
+        cropped_frames = [
+            cropped
+            for cropped in (camera_utils.crop_roi(sampled_frame, roi_used) for sampled_frame in frames)
+            if cropped is not None
+        ]
+        if cropped_frames:
+            roi_detection = detect_table_state_consensus(cropped_frames)
+            if roi_detection is None:
+                roi_label = "clean"
+                roi_confidence = 0.0
+            else:
+                roi_label = roi_detection.label
+                roi_confidence = roi_detection.confidence
+
+        scene_label, scene_confidence = _resolve_roi_label_from_scene(roi_used, scene_detections)
+        if scene_label is not None:
+            if roi_label is None or roi_label == "clean" or (
+                scene_label == "occupied" and (roi_confidence or 0.0) < scene_confidence
+            ):
+                roi_label = scene_label
+                roi_confidence = scene_confidence
+
+    return CameraSnapshotAnalysisOut(
+        frame_width=frame_width,
+        frame_height=frame_height,
+        roi_used=roi_used,
+        roi_label=roi_label,
+        roi_confidence=roi_confidence,
+        scene_summary=scene_summary,
+        scene_detections=scene_detections,
+    )
+
+
 @router.post("/{table_id}/camera/upload")
 def upload_camera_video(
     table_id: str,
@@ -110,6 +252,29 @@ def upload_camera_video(
     db.commit()
 
     return {"cameraUrl": file_path, "filename": file.filename}
+
+
+@router.post("/{table_id}/qr/rotate")
+def rotate_table_qr(
+    table_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_floor_editor),
+) -> dict:
+    table_service.get_table(db, table_id)
+
+    active_codes = (
+        db.query(TableQRCode)
+        .filter(TableQRCode.table_id == table_id, TableQRCode.is_active.is_(True))
+        .all()
+    )
+    for qr in active_codes:
+        qr.is_active = False
+
+    new_token = new_id()
+    db.add(TableQRCode(id=new_id(), table_id=table_id, token=new_token, is_active=True))
+    db.commit()
+
+    return {"token": new_token, "message": "QR token rotated"}
 
 
 @router.post("", response_model=TableOut)

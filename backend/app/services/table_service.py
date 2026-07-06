@@ -30,10 +30,15 @@ def _iso_now() -> str:
 
 
 def _on_status_change(table: Table, old_status: str, new_status: str) -> None:
-    """Reset camera scan counters; stamp cleaning start time."""
+    """Reset camera scan counters and edge-triggered alert flags; stamp cleaning start time."""
     if old_status != new_status:
         table.consecutive_person_scans = 0
         table.consecutive_empty_scans = 0
+        # Re-arm one-shot alerts: each occurrence of BILLING/CLEANING gets its
+        # own alert cycle, so leaving the status resets the flags.
+        table.dirty_alert_sent = False
+        table.dirty_escalated = False
+        table.departure_alert_sent = False
     if new_status == "CLEANING":
         table.cleaning_started_at = _iso_now()
     elif old_status == "CLEANING" and new_status != "CLEANING":

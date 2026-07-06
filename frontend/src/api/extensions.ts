@@ -3,6 +3,7 @@
  * Drop this into src/api/extensions.ts and import in your existing client.ts
  */
 
+const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 function humanizeStatus(status: number, detail?: string): string {
@@ -18,6 +19,9 @@ function getToken(): string | null {
 }
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  if (USE_MOCK) {
+    throw new Error('This page requires VITE_USE_MOCK=false and a running backend API.')
+  }
   const token = getToken()
   const res = await fetch(`${API_URL}${path}`, {
     ...options,

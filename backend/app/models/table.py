@@ -1,4 +1,4 @@
-from sqlalchemy import Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -34,6 +34,16 @@ class Table(Base):
     consecutive_empty_scans: Mapped[int] = mapped_column(Integer, default=0)
     # ISO timestamp when table entered CLEANING (1-minute grace before dirty model runs)
     cleaning_started_at: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+
+    # Edge-triggered alert flags — set True the moment an alert fires so it
+    # never re-fires while the condition stays true; reset on status change.
+    # DIRTY_ALERT sent to WAITER (10 min into CLEANING, or 15 min if no camera)
+    dirty_alert_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    # dirty escalated to MANAGER (20 min into CLEANING)
+    dirty_escalated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # DEPARTURE_ALERT sent to MANAGER (3 consecutive empty scans during BILLING);
+    # re-arms if a person reappears at the table
+    departure_alert_sent: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # reservation auto-release: if status=RESERVED and reserved_until < now → AVAILABLE
     reserved_until: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)

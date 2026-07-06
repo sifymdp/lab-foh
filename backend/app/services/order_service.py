@@ -8,7 +8,7 @@ from app.core.status_machine import is_valid_transition
 from app.models import Bill, DiningSession, MenuItem, Order, OrderItem, Table
 from app.schemas.order import BillOut, OrderCreate, OrderItemOut, OrderOut
 from app.services.floor_service import _table_to_out
-from app.services.table_service import active_session_for_table, record_history
+from app.services.table_service import _on_status_change, active_session_for_table, record_history
 from app.socket_manager import emit_sync
 
 
@@ -222,12 +222,16 @@ def mark_paid(db: Session, session_id: str, user_id: str | None) -> BillOut:
         old = table.status
         table.status = "PAID"
         session.status = "PAID"
+        _on_status_change(table, old, "PAID")
         record_history(db, table.id, old, "PAID", user_id, session.id)
 
     if is_valid_transition(table.status, "CLEANING"):
         old = table.status
         table.status = "CLEANING"
         session.status = "CLEANING"
+        # resets counters/alert flags and stamps cleaning_started_at, which
+        # starts the 10/20-minute dirty-alert clock for this cleaning cycle
+        _on_status_change(table, old, "CLEANING")
         record_history(db, table.id, old, "CLEANING", user_id, session.id)
 
     db.commit()

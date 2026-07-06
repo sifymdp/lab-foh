@@ -3,21 +3,30 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.yolo_models import load_models, unload_models
 from app.config import settings
-from app.database import Base, SessionLocal, engine
+from app.database import Base, SessionLocal, engine, migrate_schema
 from app.routers import ai, auth, floors, guest, menu, orders, reservations, sessions, stream, tables, users, ws
 from app.seed import seed_database
+from app.workers import camera_worker
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    migrate_schema()
     db = SessionLocal()
     try:
         seed_database(db)
     finally:
         db.close()
+    models_loaded = load_models()
+    if models_loaded:
+        camera_worker.start_worker()
     yield
+    stream.stop_all_stream_workers()
+    await camera_worker.stop_worker()
+    unload_models()
 
 
 app = FastAPI(title="FOH Table Management API", version="1.0.0", lifespan=lifespan)

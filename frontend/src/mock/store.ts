@@ -4,6 +4,7 @@ import { isValidTransition } from '../lib/statusTransitions'
 import type {
   AuthUser,
   CameraRoiSuggestion,
+  CameraSnapshotAnalysis,
   CreateTablePayload,
   CreateUserPayload,
   DiningSession,
@@ -215,6 +216,49 @@ export async function mockAutoDetectCameraRoi(tableId: string): Promise<CameraRo
         y: roi.y + 18,
         width: Math.max(90, Math.round(roi.width * 0.8)),
         height: Math.max(70, Math.round(roi.height * 0.82)),
+      },
+    ],
+  }
+}
+
+export async function mockAnalyzeCameraSnapshot(tableId: string, roiCoords?: Table['roiCoords']): Promise<CameraSnapshotAnalysis> {
+  await delay(180)
+  const table = state.floor.tables.find((t) => t.id === tableId)
+  if (!table) throw new Error('Table not found')
+
+  const roi = roiCoords ?? table.roiCoords ?? {
+    x: 380,
+    y: 180,
+    width: 180,
+    height: 120,
+  }
+
+  return {
+    frameWidth: 960,
+    frameHeight: 540,
+    roiUsed: structuredClone(roi),
+    roiLabel: 'dirty',
+    roiConfidence: 0.82,
+    sceneSummary: {
+      clean: 1,
+      dirty: 1,
+      occupied: 2,
+    },
+    sceneDetections: [
+      {
+        label: 'dirty',
+        confidence: 0.82,
+        bounds: structuredClone(roi),
+      },
+      {
+        label: 'occupied',
+        confidence: 0.73,
+        bounds: { x: 540, y: 90, width: 190, height: 135 },
+      },
+      {
+        label: 'occupied',
+        confidence: 0.68,
+        bounds: { x: 210, y: 110, width: 180, height: 140 },
       },
     ],
   }

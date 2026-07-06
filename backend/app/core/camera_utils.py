@@ -80,6 +80,46 @@ def capture_frame(camera_url: str) -> np.ndarray | None:
     return frame
 
 
+def capture_frame_sequence(
+    camera_url: str,
+    sample_frames: int,
+    frame_stride: int = 1,
+) -> list[np.ndarray]:
+    """Capture a short sequence of frames for temporal smoothing.
+
+    For uploaded videos this samples forward in time; for streams it still
+    reads nearby frames from the source. Empty results mean the source could
+    not provide any readable frames.
+    """
+    cap = cv2.VideoCapture(resolve_camera_source(camera_url))
+    if not cap.isOpened():
+        logger.warning("Could not open camera for sequence capture: %s", camera_url)
+        return []
+
+    frames: list[np.ndarray] = []
+    stride = max(frame_stride, 1)
+    try:
+        while len(frames) < max(sample_frames, 1):
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                if frames:
+                    break
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    break
+            frames.append(frame)
+            for _ in range(stride - 1):
+                ok, _ = cap.read()
+                if not ok:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    break
+    finally:
+        cap.release()
+
+    return frames
+
+
 def set_stream_frame(frame: np.ndarray) -> None:
     global latest_stream_frame
     latest_stream_frame = frame

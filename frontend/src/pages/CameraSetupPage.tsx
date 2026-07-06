@@ -2,15 +2,22 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { FloorPlanMiniMap } from '../components/floor/FloorPlanMiniMap'
 import { useFloor } from '../context/FloorContext'
-import type { CameraRoiSuggestion, RectBounds } from '../types'
+import type { CameraRoiSuggestion, CameraSnapshotAnalysis, RectBounds } from '../types'
 
 const MAX_DISPLAY_WIDTH = 720
 const DEFAULT_BOX_SIZE = 160
 const LASSO_PADDING = 18
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 interface LassoPoint {
   x: number
   y: number
+}
+
+const RESULT_TONE: Record<'clean' | 'dirty' | 'occupied', { bg: string; border: string; text: string }> = {
+  clean: { bg: '#ecfdf5', border: '#86efac', text: '#166534' },
+  dirty: { bg: '#fff7ed', border: '#fdba74', text: '#c2410c' },
+  occupied: { bg: '#fef2f2', border: '#fca5a5', text: '#b91c1c' },
 }
 
 function isUsableAutoRoi(roi: RectBounds, frameWidth: number, frameHeight: number): boolean {
@@ -54,6 +61,21 @@ function lassoFromRect(rect: RectBounds): LassoPoint[] {
   ]
 }
 
+function mapClientPointToDisplaySpace(
+  clientX: number,
+  clientY: number,
+  rect: DOMRect,
+  displayWidth: number,
+  displayHeight: number,
+): LassoPoint {
+  const scaleX = displayWidth / Math.max(rect.width, 1)
+  const scaleY = displayHeight / Math.max(rect.height, 1)
+  return {
+    x: clamp((clientX - rect.left) * scaleX, 0, displayWidth),
+    y: clamp((clientY - rect.top) * scaleY, 0, displayHeight),
+  }
+}
+
 export function CameraSetupPage() {
   const { floor, updateTable, refresh } = useFloor()
   const tables = floor?.tables ?? []
@@ -79,12 +101,17 @@ export function CameraSetupPage() {
   const [autoDetecting, setAutoDetecting] = useState(false)
   const [autoDetectError, setAutoDetectError] = useState<string | null>(null)
   const [autoSuggestion, setAutoSuggestion] = useState<CameraRoiSuggestion | null>(null)
+  const [snapshotAnalysis, setSnapshotAnalysis] = useState<CameraSnapshotAnalysis | null>(null)
+  const [analyzingSnapshot, setAnalyzingSnapshot] = useState(false)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [box, setBox] = useState<RectBounds>({ x: 40, y: 40, width: DEFAULT_BOX_SIZE, height: DEFAULT_BOX_SIZE })
   const [lassoPoints, setLassoPoints] = useState<LassoPoint[]>([])
   const [lassoing, setLassoing] = useState(false)
   const [hasDraftRoi, setHasDraftRoi] = useState(false)
   const [savingRoi, setSavingRoi] = useState(false)
   const [roiSaved, setRoiSaved] = useState(false)
+  const [showLiveStream, setShowLiveStream] = useState(false)
+  const [streamNonce, setStreamNonce] = useState(0)
 
   const objectUrlRef = useRef<string | null>(null)
   const imageFrameRef = useRef<HTMLDivElement>(null)
@@ -112,12 +139,14 @@ export function CameraSetupPage() {
     setSnapshotUrl(null)
     setNaturalSize(null)
     setSnapshotError(null)
+    setAnalysisError(null)
     setAutoDetectError(null)
     setUrlError(null)
     setUrlSaved(false)
     setRoiSaved(false)
     setUploadedFilename(null)
     setAutoSuggestion(null)
+    setSnapshotAnalysis(null)
     setLassoPoints([])
     lassoPointsRef.current = []
     setHasDraftRoi(false)
@@ -166,6 +195,7 @@ export function CameraSetupPage() {
     if (!selectedTable) return
     setLoadingSnapshot(true)
     setSnapshotError(null)
+    setAnalysisError(null)
     setRoiSaved(false)
     try {
       const url = await api.getCameraSnapshot(selectedTable.id)
@@ -174,8 +204,42 @@ export function CameraSetupPage() {
       setSnapshotUrl(url)
     } catch (e) {
       setSnapshotError(e instanceof Error ? e.message : 'Could not load a snapshot')
+      setSnapshotAnalysis(null)
     } finally {
       setLoadingSnapshot(false)
+    }
+  }
+
+  function getCurrentRealRoi(): RectBounds | null {
+    if (!naturalSize) return selectedTable?.roiCoords ?? null
+    if (!hasDraftRoi && lassoPointsRef.current.length === 0 && !autoSuggestion && !selectedTable?.roiCoords) {
+      return null
+    }
+    // The box lives in display space (displayWidth x displayHeight), not in
+    // on-screen rendered pixels — the lasso handler already maps pointer
+    // positions into display space, so scale from there to natural pixels.
+    const scaleX = naturalSize.width / displayWidth
+    const scaleY = naturalSize.height / Math.max(displayHeight, 1)
+    const currentBox = boxRef.current
+    return {
+      x: Math.round(currentBox.x * scaleX),
+      y: Math.round(currentBox.y * scaleY),
+      width: Math.round(currentBox.width * scaleX),
+      height: Math.round(currentBox.height * scaleY),
+    }
+  }
+
+  async function handleAnalyzeSnapshot(roiOverride?: RectBounds | null) {
+    if (!selectedTable || !snapshotUrl) return
+    setAnalyzingSnapshot(true)
+    setAnalysisError(null)
+    try {
+      const analysis = await api.analyzeCameraSnapshot(selectedTable.id, roiOverride ?? getCurrentRealRoi())
+      setSnapshotAnalysis(analysis)
+    } catch (e) {
+      setAnalysisError(e instanceof Error ? e.message : 'Could not analyze the current snapshot')
+    } finally {
+      setAnalyzingSnapshot(false)
     }
   }
 
@@ -213,6 +277,13 @@ export function CameraSetupPage() {
       setHasDraftRoi(true)
       if (!snapshotUrl) {
         await handleLoadSnapshot()
+      } else {
+        await handleAnalyzeSnapshot({
+          x: Math.round(safeSuggestion.roiCoords.x),
+          y: Math.round(safeSuggestion.roiCoords.y),
+          width: Math.round(safeSuggestion.roiCoords.width),
+          height: Math.round(safeSuggestion.roiCoords.height),
+        })
       }
     } catch (e) {
       setAutoDetectError(e instanceof Error ? e.message : 'Could not auto-detect the ROI')
@@ -276,12 +347,15 @@ export function CameraSetupPage() {
     const frame = imageFrameRef.current
     if (!frame || !naturalSize) return
     const rect = frame.getBoundingClientRect()
-    const frameWidth = rect.width
-    const frameHeight = rect.height
-    const nextPoint = {
-      x: clamp(clientX - rect.left, 0, frameWidth),
-      y: clamp(clientY - rect.top, 0, frameHeight),
-    }
+    const frameWidth = displayWidth
+    const frameHeight = displayHeight
+    const nextPoint = mapClientPointToDisplaySpace(
+      clientX,
+      clientY,
+      rect,
+      frameWidth,
+      frameHeight,
+    )
     setLassoPoints((current) => {
       const previous = current[current.length - 1]
       if (previous && Math.hypot(previous.x - nextPoint.x, previous.y - nextPoint.y) < 8) {
@@ -345,23 +419,25 @@ export function CameraSetupPage() {
       setSnapshotError('Draw a lasso around the table before saving the ROI.')
       return
     }
-    const frame = imageFrameRef.current
-    const renderedWidth = frame?.getBoundingClientRect().width || displayWidth
     setSavingRoi(true)
     setSnapshotError(null)
     try {
-      const scale = naturalSize.width / renderedWidth
+      // Box coordinates are in display space — scale straight to natural
+      // camera pixels, the space the backend matches detections in.
+      const scaleX = naturalSize.width / displayWidth
+      const scaleY = naturalSize.height / Math.max(displayHeight, 1)
       const currentBox = boxRef.current
       const realRoi: RectBounds = {
-        x: Math.round(currentBox.x * scale),
-        y: Math.round(currentBox.y * scale),
-        width: Math.round(currentBox.width * scale),
-        height: Math.round(currentBox.height * scale),
+        x: Math.round(currentBox.x * scaleX),
+        y: Math.round(currentBox.y * scaleY),
+        width: Math.round(currentBox.width * scaleX),
+        height: Math.round(currentBox.height * scaleY),
       }
       await updateTable(selectedTable.id, { roiCoords: realRoi })
       await refresh()
       setHasDraftRoi(false)
       setRoiSaved(true)
+      await handleAnalyzeSnapshot(realRoi)
     } catch (e) {
       setSnapshotError(e instanceof Error ? e.message : 'Could not save the ROI')
     } finally {
@@ -371,6 +447,13 @@ export function CameraSetupPage() {
 
   const displayHeight = naturalSize ? displayWidth * (naturalSize.height / naturalSize.width) : 0
   const canSaveRoi = Boolean(hasDraftRoi || lassoPoints.length > 0 || autoSuggestion)
+  const roiResultTone = snapshotAnalysis?.roiLabel ? RESULT_TONE[snapshotAnalysis.roiLabel] : null
+
+  useEffect(() => {
+    if (!snapshotUrl || !selectedTable) return
+    const roi = selectedTable.roiCoords ?? null
+    void handleAnalyzeSnapshot(roi)
+  }, [snapshotUrl, selectedTableId])
 
   return (
     <div className="camera-setup-page">
@@ -502,6 +585,14 @@ export function CameraSetupPage() {
                   >
                     {autoDetecting ? 'Detecting…' : 'Auto-detect tables'}
                   </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => void handleAnalyzeSnapshot()}
+                    disabled={!snapshotUrl || analyzingSnapshot}
+                  >
+                    {analyzingSnapshot ? 'Analyzing…' : 'Analyze snapshot'}
+                  </button>
                 </div>
                 {snapshotUrl && naturalSize && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
@@ -514,10 +605,73 @@ export function CameraSetupPage() {
                 )}
                 {snapshotError && <p className="form-error" style={{ marginTop: 8 }}>{snapshotError}</p>}
                 {autoDetectError && <p className="form-error" style={{ marginTop: 8 }}>{autoDetectError}</p>}
+                {analysisError && <p className="form-error" style={{ marginTop: 8 }}>{analysisError}</p>}
                 {autoSuggestion && (
                   <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
                     Auto-detect ran on {autoSuggestion.sampledFrames} frames using {autoSuggestion.method}, confidence {Math.round(autoSuggestion.confidence * 100)}%.
                   </p>
+                )}
+
+                {snapshotAnalysis && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      padding: 16,
+                      borderRadius: 10,
+                      border: `1px solid ${roiResultTone?.border ?? '#dbeafe'}`,
+                      background: roiResultTone?.bg ?? '#f8fafc',
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+                      <strong style={{ fontSize: 14, color: '#0f172a' }}>YOLOv8 snapshot result</strong>
+                      {snapshotAnalysis.roiLabel && (
+                        <span
+                          style={{
+                            padding: '4px 10px',
+                            borderRadius: 999,
+                            background: roiResultTone?.border ?? '#cbd5e1',
+                            color: roiResultTone?.text ?? '#334155',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.04em',
+                          }}
+                        >
+                          {snapshotAnalysis.roiLabel}
+                        </span>
+                      )}
+                      {snapshotAnalysis.roiConfidence != null && (
+                        <span style={{ fontSize: 13, color: '#475569' }}>
+                          Confidence {Math.round(snapshotAnalysis.roiConfidence * 100)}%
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ margin: '10px 0 0', fontSize: 13, color: '#475569' }}>
+                      ROI prediction uses the green table selection. Scene summary reads the whole snapshot environment with the YOLOv8 model.
+                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+                      {(['clean', 'dirty', 'occupied'] as const).map((label) => (
+                        <div
+                          key={label}
+                          style={{
+                            padding: '8px 12px',
+                            borderRadius: 8,
+                            background: '#fff',
+                            border: '1px solid #e2e8f0',
+                            fontSize: 13,
+                            color: '#334155',
+                          }}
+                        >
+                          {label[0].toUpperCase() + label.slice(1)} in scene: {snapshotAnalysis.sceneSummary[label] ?? 0}
+                        </div>
+                      ))}
+                    </div>
+                    {snapshotAnalysis.sceneDetections.length > 0 && (
+                      <p style={{ margin: '12px 0 0', fontSize: 13, color: '#64748b' }}>
+                        Scene detections: {snapshotAnalysis.sceneDetections.map((d) => `${d.label} ${Math.round(d.confidence * 100)}%`).join(', ')}
+                      </p>
+                    )}
+                  </div>
                 )}
 
                 {snapshotUrl && (
@@ -588,6 +742,39 @@ export function CameraSetupPage() {
                   </div>
                 )}
               </div>
+
+              {/* Step 3 — Live stream preview */}
+              {floor && (
+                <div style={{ marginTop: 24 }}>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    3. Live stream preview
+                  </label>
+                  <p className="muted" style={{ fontSize: 13, margin: '0 0 8px' }}>
+                    Streams the floor camera with detection overlays. Saved ROI boxes should sit
+                    directly on top of their tables, and labels update as table states change.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      setStreamNonce((n) => n + 1)
+                      setShowLiveStream((v) => !v)
+                    }}
+                  >
+                    {showLiveStream ? 'Stop live preview' : 'Start live preview'}
+                  </button>
+                  {showLiveStream && (
+                    <div style={{ marginTop: 12, borderRadius: 8, overflow: 'hidden', border: '1px solid #e2e8f0', maxWidth: MAX_DISPLAY_WIDTH }}>
+                      <img
+                        key={streamNonce}
+                        src={`${API_URL}/stream/${floor.id}?nonce=${streamNonce}`}
+                        alt="Live annotated camera stream"
+                        style={{ display: 'block', width: '100%' }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {floor && (
