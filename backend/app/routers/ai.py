@@ -4,7 +4,15 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_user, require_manager_or_owner, require_menu_manager
 from app.database import get_db
 from app.models.user import User
-from app.schemas.ai import AIEventCreate, AIEventOut, SeatingResponse, SeatingSuggestIn, ShiftReport
+from app.schemas.ai import (
+    AIEventCreate,
+    AIEventOut,
+    ChatIn,
+    ChatOut,
+    SeatingResponse,
+    SeatingSuggestIn,
+    ShiftReport,
+)
 from app.services import ai_service
 
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -45,6 +53,16 @@ def seating_suggest(
 ) -> SeatingResponse:
     suggestion = ai_service.seating_suggest(db, body.party_size)
     return SeatingResponse(suggestion=suggestion, party_size=body.party_size)
+
+
+@router.post("/chat", response_model=ChatOut)
+def chat(
+    body: ChatIn,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ChatOut:
+    reply, ai_generated = ai_service.floor_chat(db, body.message, body.history)
+    return ChatOut(reply=reply, ai_generated=ai_generated)
 
 
 @router.get("/reports/shift", response_model=ShiftReport)

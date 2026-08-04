@@ -17,6 +17,8 @@ TableStatus = Literal[
 # RESERVED  → AVAILABLE: manual release or auto-release on no-show
 # SEATED    → ACTIVE  : guest places first QR order
 # SEATED    → BILLING : guest requests bill before ordering (edge case)
+# SEATED    → CLEANING: camera sees guests gone and the table dirty (walkout mess)
+# SEATED    → AVAILABLE: camera sees guests gone and the table clean, or host un-seats
 # ACTIVE    → BILLING : guest taps Request Bill
 # BILLING   → PAID    : Stripe webhook confirms payment or staff taps Mark Paid
 # PAID      → CLEANING: automatic immediately after payment confirmed
@@ -24,7 +26,7 @@ TableStatus = Literal[
 STATUS_TRANSITIONS: dict[str, list[str]] = {
     "AVAILABLE": ["RESERVED", "SEATED"],
     "RESERVED":  ["AVAILABLE", "SEATED"],
-    "SEATED":    ["ACTIVE", "BILLING"],
+    "SEATED":    ["ACTIVE", "BILLING", "CLEANING", "AVAILABLE"],
     "ACTIVE":    ["BILLING"],
     "BILLING":   ["PAID"],
     "PAID":      ["CLEANING"],

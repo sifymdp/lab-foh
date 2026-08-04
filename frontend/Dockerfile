@@ -1,4 +1,5 @@
-FROM node:20
+# Vite 8 requires Node 20.19+/22.12+; pin 22 so the tag can't drift below that.
+FROM node:22
 
 WORKDIR /app
 

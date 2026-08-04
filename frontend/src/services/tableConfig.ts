@@ -53,10 +53,12 @@ export const STATUS_CONFIG: Record<TableStatus, StatusStyle> = {
   },
 }
 
+// Mirrors STATUS_TRANSITIONS in backend/app/core/status_machine.py — the API
+// rejects anything not listed there, so these must stay in sync.
 export const STATUS_TRANSITIONS: Record<TableStatus, TableStatus[]> = {
-  AVAILABLE: ['RESERVED'],
-  RESERVED: ['AVAILABLE'],
-  SEATED: ['ACTIVE', 'BILLING'],
+  AVAILABLE: ['RESERVED', 'SEATED'],
+  RESERVED: ['AVAILABLE', 'SEATED'],
+  SEATED: ['ACTIVE', 'BILLING', 'CLEANING', 'AVAILABLE'],
   ACTIVE: ['BILLING'],
   BILLING: ['PAID'],
   PAID: ['CLEANING'],

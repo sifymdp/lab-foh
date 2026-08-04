@@ -31,3 +31,20 @@ class ShiftReport(CamelModel):
     report_date: str
     content: str
     stats: dict
+
+
+class ChatMessage(CamelModel):
+    role: str  # "user" | "assistant"
+    content: str
+
+
+class ChatIn(CamelModel):
+    message: str
+    history: list[ChatMessage] = []
+
+
+class ChatOut(CamelModel):
+    reply: str
+    # False when Ollama was unreachable and the deterministic floor summary
+    # answered instead — the UI badges this so demos never look broken.
+    ai_generated: bool

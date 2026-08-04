@@ -5,9 +5,21 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      # Source mount: edits on the host apply without rebuilding the image.
+      # This also supplies models/ and camera_uploads/ from the working tree.
       - ./backend:/app
+      # The saved floorplan + ROIs live in the repo-root DB, which sits outside
+      # the mount above. The absolute DATABASE_URL below points at it — a
+      # relative URL resolves to /app/foh.db, which starts empty and gets
+      # seeded with the 10-table demo layout instead of the real one.
+      - ./foh.db:/data/foh.db
     environment:
-      - DATABASE_URL=sqlite:///./foh.db
+      - DATABASE_URL=sqlite:////data/foh.db
+      - CAMERA_ENABLED=true
+      # 10s instead of the 30s default so demo status changes land quickly.
+      - CAMERA_SCAN_INTERVAL_SECONDS=10
+      - YOLO_TABLE_STATE_MODEL_PATH=models/table_cleanliness_best.pt
+      - CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
   frontend:
     build:
@@ -16,9 +28,14 @@ services:
       - "5173:5173"
     volumes:
       - ./frontend:/app
+      # Anonymous volume keeps the image's Linux node_modules from being
+      # shadowed by the host's macOS build.
       - /app/node_modules
     environment:
       - VITE_USE_MOCK=false
+      # Resolved by the browser on the host, so these use the published port
+      # rather than the "backend" service name.
       - VITE_API_URL=http://localhost:8000
+      - VITE_SOCKET_URL=http://localhost:8000
     depends_on:
       - backend

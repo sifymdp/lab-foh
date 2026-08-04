@@ -137,6 +137,9 @@ export interface AIEvent {
 }
 export interface SeatingResponse { suggestion: string; partySize: number }
 export interface ShiftReport { reportDate: string; content: string; stats: Record<string, unknown> }
+export interface ChatMessage { role: 'user' | 'assistant'; content: string }
+/** aiGenerated is false when Ollama was down and the floor-data fallback answered. */
+export interface ChatResponse { reply: string; aiGenerated: boolean }
 
 export const aiApi = {
   suggestSeating: (partySize: number) =>
@@ -149,6 +152,10 @@ export const aiApi = {
     apiFetch<{ id: string; resolved: boolean }>(`/ai/events/${id}/resolve`, { method: 'PATCH' }),
   getShiftReport: (date?: string) =>
     apiFetch<ShiftReport>(`/ai/reports/shift${date ? `?date=${date}` : ''}`),
+  chat: (message: string, history: ChatMessage[] = []) =>
+    apiFetch<ChatResponse>('/ai/chat', {
+      method: 'POST', body: JSON.stringify({ message, history }),
+    }),
 }
 
 // ─── QR ───────────────────────────────────────────────────────────────────────

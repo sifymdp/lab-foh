@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.core import camera_utils
 from app.core.roi_matching import match_detection_for_roi
-from app.core.status_machine import is_valid_transition
+from app.core.status_machine import ACTIVE_SESSION_STATUSES, is_valid_transition
 from app.core.yolo_models import (
     TableStateDetection,
     detect_table_state,
@@ -99,6 +99,9 @@ def _change_status(db: Session, table: Table, new_status: str) -> bool:
     table_service._on_status_change(table, old_status, new_status)
     if session:
         session.status = new_status
+        if new_status not in ACTIVE_SESSION_STATUSES:
+            # camera-driven walkout closes the session, same as close_session
+            session.closed_at = datetime.now(timezone.utc)
     table_service.record_history(
         db,
         table.id,
@@ -111,12 +114,15 @@ def _change_status(db: Session, table: Table, new_status: str) -> bool:
     return True
 
 
-# The camera has authority over exactly two transitions:
-#   AVAILABLE → SEATED   (3 consecutive occupied ticks)
+# The camera has authority over exactly four transitions:
+#   AVAILABLE → SEATED    (3 consecutive occupied ticks)
+#   SEATED    → CLEANING  (3 consecutive guest-free ticks, table left dirty)
+#   SEATED    → AVAILABLE (3 consecutive guest-free ticks, table left clean)
 #   CLEANING  → AVAILABLE (3 consecutive clean ticks after grace period)
 # It NEVER touches payment states — a table in BILLING stays in BILLING no
-# matter what the camera sees; there it only watches for departures.
-CAMERA_SCAN_STATUSES = ("AVAILABLE", "BILLING", "CLEANING")
+# matter what the camera sees; there it only watches for departures. ACTIVE
+# tables (open orders) are also left alone: those resolve through billing.
+CAMERA_SCAN_STATUSES = ("AVAILABLE", "SEATED", "BILLING", "CLEANING")
 
 
 def _iso_to_datetime(value: str) -> datetime | None:
@@ -170,6 +176,20 @@ def _apply_tick(db: Session, table: Table, label: str | None, now: datetime) -> 
         else:
             # any tick without a person (including "no reading") resets the streak
             table.consecutive_person_scans = 0
+
+    elif table.status == "SEATED":
+        if label == "occupied":
+            table.consecutive_empty_scans = 0
+        elif label in ("clean", "dirty"):
+            table.consecutive_empty_scans += 1
+            if table.consecutive_empty_scans >= required:
+                # Guests gone: the tick label that completes the streak decides
+                # where the table lands — mess needs a busser, clean goes back
+                # into rotation immediately.
+                changed = _change_status(
+                    db, table, "CLEANING" if label == "dirty" else "AVAILABLE"
+                )
+        # label None → no reading this tick; hold the streak as-is
 
     elif table.status == "BILLING":
         # Watch for guests leaving without paying. Status never changes here.

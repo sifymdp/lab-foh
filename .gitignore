@@ -9,3 +9,5 @@ dist/
 .DS_Store
 runs/
 *.pt
+# ship the trained table-state weights the camera pipeline needs at runtime
+!backend/models/table_cleanliness_best.pt

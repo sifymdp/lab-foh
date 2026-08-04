@@ -640,11 +640,6 @@ export function CameraSetupPage() {
                           {snapshotAnalysis.roiLabel}
                         </span>
                       )}
-                      {snapshotAnalysis.roiConfidence != null && (
-                        <span style={{ fontSize: 13, color: '#475569' }}>
-                          Confidence {Math.round(snapshotAnalysis.roiConfidence * 100)}%
-                        </span>
-                      )}
                     </div>
                     <p style={{ margin: '10px 0 0', fontSize: 13, color: '#475569' }}>
                       ROI prediction uses the green table selection. Scene summary reads the whole snapshot environment with the YOLOv8 model.
