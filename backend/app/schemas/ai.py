@@ -38,13 +38,16 @@ class ChatMessage(CamelModel):
     content: str
 
 
-class ChatIn(CamelModel):
-    message: str
-    history: list[ChatMessage] = []
+class ChatRequest(CamelModel):
+    messages: list[ChatMessage]
 
 
-class ChatOut(CamelModel):
+class ChatAction(CamelModel):
+    tool: str
+    summary: str
+    ok: bool
+
+
+class ChatResponse(CamelModel):
     reply: str
-    # False when Ollama was unreachable and the deterministic floor summary
-    # answered instead — the UI badges this so demos never look broken.
-    ai_generated: bool
+    actions: list[ChatAction]

@@ -1,15 +1,8 @@
-import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Surface app loggers (camera pipeline, YOLO load, WS) on the console;
-# uvicorn only configures its own loggers, so without this the camera
-# pipeline runs silently and problems are invisible.
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-
-from app.core import camera_utils
 from app.core.yolo_models import load_models, unload_models
 from app.config import settings
 from app.database import Base, SessionLocal, engine, migrate_schema
@@ -33,7 +26,6 @@ async def lifespan(_app: FastAPI):
     yield
     stream.stop_all_stream_workers()
     await camera_worker.stop_worker()
-    camera_utils.release_captures()
     unload_models()
 
 

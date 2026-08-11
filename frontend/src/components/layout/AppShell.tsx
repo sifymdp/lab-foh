@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { aiApi, type AIEvent } from '../../api/extensions'
-import { ChatDock } from '../ai/ChatDock'
+import { AIChatWidget } from '../ui/AIChatWidget'
 import { ToastStack } from '../ui/ToastStack'
 import { useAuth } from '../../context/AuthContext'
 import { useSocket } from '../../context/SocketContext'
@@ -190,7 +190,7 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
-      <ChatDock />
+      {user && (user.role === 'OWNER' || user.role === 'MANAGER') && <AIChatWidget />}
     </div>
   )
 }
