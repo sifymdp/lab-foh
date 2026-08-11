@@ -19,7 +19,33 @@ logger = logging.getLogger(__name__)
 
 EXPECTED_TABLE_STATE_CLASSES = {"clean", "dirty", "occupied"}
 
+# Pretrained COCO fallback when the custom table-state weights are unavailable.
+# COCO classes are mapped onto table states: a person at the table means
+# "occupied"; leftover tableware/food without a person means "dirty".
+COCO_FALLBACK_MODEL_NAME = "yolov8n.pt"
+COCO_OCCUPIED_CLASSES = {"person"}
+COCO_DIRTY_CLASSES = {
+    "bottle",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "banana",
+    "apple",
+    "sandwich",
+    "orange",
+    "broccoli",
+    "carrot",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+}
+
 table_state_model: YOLO | None = None
+using_fallback_model = False
 
 
 @dataclass(frozen=True)
@@ -57,7 +83,7 @@ def _resolve_model_path(raw_path: str) -> str:
 
 def load_models() -> bool:
     """Load the table-state YOLO model. Returns False if ML should stay disabled."""
-    global table_state_model
+    global table_state_model, using_fallback_model
 
     if not settings.camera_enabled:
         logger.info("Camera pipeline disabled (CAMERA_ENABLED=false)")
@@ -80,20 +106,71 @@ def load_models() -> bool:
         if missing:
             logger.warning("Table-state YOLO model is missing expected classes: %s", sorted(missing))
         table_state_model = model
+        using_fallback_model = False
         return True
     except Exception:
-        logger.exception("Failed to load table-state YOLO model — camera pipeline disabled")
+        logger.exception(
+            "Failed to load custom table-state YOLO model — falling back to pretrained %s",
+            COCO_FALLBACK_MODEL_NAME,
+        )
+
+    try:
+        fallback_path = _resolve_model_path(COCO_FALLBACK_MODEL_NAME)
+        model = YOLOClass(fallback_path)
+        table_state_model = model
+        using_fallback_model = True
+        logger.info(
+            "Loaded pretrained COCO fallback model %s (person→occupied, tableware→dirty)",
+            fallback_path,
+        )
+        return True
+    except Exception:
+        logger.exception("Failed to load fallback YOLO model — camera pipeline disabled")
         table_state_model = None
+        using_fallback_model = False
         return False
 
 
 def unload_models() -> None:
-    global table_state_model
+    global table_state_model, using_fallback_model
     table_state_model = None
+    using_fallback_model = False
+
+
+def _fallback_state_for_class(class_name: str) -> str | None:
+    if class_name in COCO_OCCUPIED_CLASSES:
+        return "occupied"
+    if class_name in COCO_DIRTY_CLASSES:
+        return "dirty"
+    return None
+
+
+def _fallback_state_detection(result: Any, conf: float) -> TableStateDetection | None:
+    """Collapse one COCO result into a table state: occupied beats dirty."""
+    best: dict[str, float] = {}
+    for box in result.boxes:
+        confidence = float(box.conf)
+        if confidence < conf:
+            continue
+        state = _fallback_state_for_class(str(table_state_model.names[int(box.cls)]).lower())
+        if state is None:
+            continue
+        best[state] = max(best.get(state, 0.0), confidence)
+    for state in ("occupied", "dirty"):
+        if state in best:
+            return TableStateDetection(label=state, confidence=best[state])
+    return None
 
 
 def is_table_state_model_ready() -> bool:
     return table_state_model is not None
+
+
+def is_using_fallback_model() -> bool:
+    """True when running on the pretrained COCO fallback instead of the custom
+    table-state model. The fallback has no "clean" class — an empty ROI simply
+    yields no detections — so callers should treat "no reading" as clean."""
+    return using_fallback_model
 
 
 def detect_table_state(frame: Any, threshold: float | None = None) -> TableStateDetection | None:
@@ -109,6 +186,9 @@ def detect_table_state(frame: Any, threshold: float | None = None) -> TableState
     results = table_state_model(frame, verbose=False, conf=conf)
     if not results or not results[0].boxes:
         return None
+
+    if using_fallback_model:
+        return _fallback_state_detection(results[0], conf)
 
     best = max(results[0].boxes, key=lambda box: float(box.conf))
     confidence = float(best.conf)
@@ -135,6 +215,9 @@ def detect_table_states(
     for result in results:
         if not result.boxes:
             detections.append(None)
+            continue
+        if using_fallback_model:
+            detections.append(_fallback_state_detection(result, conf))
             continue
         best = max(result.boxes, key=lambda box: float(box.conf))
         confidence = float(best.conf)
@@ -200,11 +283,21 @@ def iter_full_frame_detections(frame: Any, threshold: float | None = None) -> li
     detections: list[tuple[int, int, int, int, TableStateDetection]] = []
     for box in results[0].boxes:
         x1, y1, x2, y2 = map(int, box.xyxy[0])
+        label = str(table_state_model.names[int(box.cls)]).lower()
+
+        if using_fallback_model:
+            state = _fallback_state_for_class(label)
+            if state is None:
+                continue
+            detections.append((x1, y1, x2, y2, TableStateDetection(label=state, confidence=float(box.conf))))
+            continue
+
+        # Custom-model boxes span the whole table+guests; trim the top so the
+        # box hugs the table zone, and drop tall boxes that are likely people.
         width = max(x2 - x1, 1)
         height = max(y2 - y1, 1)
         if height / width > 1.5:
             continue
         y1 = y1 + int(height * 0.35)
-        label = str(table_state_model.names[int(box.cls)]).lower()
         detections.append((x1, y1, x2, y2, TableStateDetection(label=label, confidence=float(box.conf))))
     return detections

@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
-import { OCCUPIED_STATUSES, STATUS_CONFIG } from '../../services/tableConfig'
+import { STATUS_CONFIG } from '../../services/tableConfig'
 import { useGlobalPointerDrag } from '../../lib/useGlobalPointerDrag'
 import type { DiningSession, Table } from '../../types'
-import { OccupancyTimer } from './OccupancyTimer'
 
 interface TableMarkerProps {
   table: Table
@@ -15,7 +14,6 @@ interface TableMarkerProps {
 
 export function TableMarker({
   table,
-  session,
   selected,
   editable,
   onSelect,
@@ -29,7 +27,6 @@ export function TableMarker({
 
   const style = STATUS_CONFIG[table.status]
   const isCircle = table.shape === 'CIRCLE'
-  const showTimer = session && OCCUPIED_STATUSES.includes(table.status)
 
   const rect = { x: live.x, y: live.y, width: live.width, height: live.height }
 
@@ -93,11 +90,6 @@ export function TableMarker({
         </span>
         {table.capacity}
       </span>
-      {showTimer && session && (
-        <span className="table-marker__timer">
-          <OccupancyTimer seatedAt={session.seatedAt} />
-        </span>
-      )}
       {showHandles && (
         <>
           <span className="resize-handle resize-handle--se" onPointerDown={startResizeSE} />

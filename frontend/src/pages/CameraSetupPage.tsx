@@ -608,7 +608,7 @@ export function CameraSetupPage() {
                 {analysisError && <p className="form-error" style={{ marginTop: 8 }}>{analysisError}</p>}
                 {autoSuggestion && (
                   <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
-                    Auto-detect ran on {autoSuggestion.sampledFrames} frames using {autoSuggestion.method}, confidence {Math.round(autoSuggestion.confidence * 100)}%.
+                    Auto-detect ran on {autoSuggestion.sampledFrames} frames using {autoSuggestion.method}.
                   </p>
                 )}
 
@@ -661,11 +661,6 @@ export function CameraSetupPage() {
                         </div>
                       ))}
                     </div>
-                    {snapshotAnalysis.sceneDetections.length > 0 && (
-                      <p style={{ margin: '12px 0 0', fontSize: 13, color: '#64748b' }}>
-                        Scene detections: {snapshotAnalysis.sceneDetections.map((d) => `${d.label} ${Math.round(d.confidence * 100)}%`).join(', ')}
-                      </p>
-                    )}
                   </div>
                 )}
 

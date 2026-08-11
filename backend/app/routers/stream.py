@@ -15,6 +15,7 @@ from app.core.roi_matching import match_detection_for_roi
 from app.core.yolo_models import (
     TableStateDetection,
     is_table_state_model_ready,
+    is_using_fallback_model,
     iter_full_frame_detections,
     smooth_table_state,
 )
@@ -151,10 +152,13 @@ def _update_state_detections(raw_frame, tables: list[dict], state: StreamWorkerS
         matched = match_detection_for_roi(detections, table["roi"])
         history = state.roi_history.setdefault(table_id, deque(maxlen=history_size))
         history.append(matched)
-        # treat_none_as_clean=False: a briefly unmatched table (e.g. someone
-        # blocking the camera) holds its last known label instead of flipping
-        # to "clean". A None result means "no reading" — keep the prior label.
-        smoothed = smooth_table_state(list(history), treat_none_as_clean=False)
+        # Custom model: a briefly unmatched table (e.g. someone blocking the
+        # camera) holds its last known label instead of flipping to "clean" —
+        # None means "no reading". COCO fallback: there is no "clean" class,
+        # so an empty ROI produces no detections and None really does mean
+        # clean; without this, a table that empties out would keep its stale
+        # "occupied" label forever.
+        smoothed = smooth_table_state(list(history), treat_none_as_clean=is_using_fallback_model())
         if smoothed is not None:
             state.roi_labels[table_id] = smoothed
         else:
@@ -180,22 +184,21 @@ def _draw_stream_annotations(
         stable_detection = state.roi_labels.get(str(table["id"]))
 
         if stable_detection is None:
-            label = str(table.get("status") or "ROI")
-            confidence = 0.0
-            color = (128, 128, 128)
+            # No camera reading — fall back to the table's live status from the
+            # DB (refreshed every CONFIG_REFRESH_SECONDS) in its status color.
+            status = str(table.get("status") or "")
+            label = camera_utils.status_label(status) if status else "ROI"
+            color = camera_utils.STATUS_COLORS.get(status, (128, 128, 128))
         else:
-            label = stable_detection.label
-            confidence = stable_detection.confidence
-            color = DETECTION_COLORS.get(label, (128, 128, 128))
+            label = stable_detection.label.title()
+            color = DETECTION_COLORS.get(stable_detection.label, (128, 128, 128))
 
-        sub_label = f"{confidence:.2f}" if confidence > 0 else None
         camera_utils.draw_table_overlay(
             output_frame,
             output_roi,
             str(table["number"]),
-            label.title(),
+            label,
             color,
-            sub_label=sub_label,
         )
 
 

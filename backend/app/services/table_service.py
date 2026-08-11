@@ -126,10 +126,6 @@ def patch_table_status(
     _on_status_change(table, old, new_status)
     if session:
         session.status = new_status
-        if new_status not in ACTIVE_SESSION_STATUSES and session.closed_at is None:
-            # e.g. staff sends a SEATED table straight back to AVAILABLE —
-            # stamp closure so the session doesn't linger open in reports
-            session.closed_at = datetime.now(timezone.utc)
     record_history(db, table_id, old, new_status, user_id, session.id if session else None)
     db.commit()
     db.refresh(table)
