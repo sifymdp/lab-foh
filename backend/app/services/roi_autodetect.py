@@ -1,48 +1,16 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 
-from app.config import settings
+from app.core import yolo_models
 from app.core.camera_utils import resolve_camera_source
 from app.schemas.floor import RectBounds
 
 logger = logging.getLogger(__name__)
-
-_table_model: Any | None = None
-
-
-def _load_table_model() -> Any | None:
-    global _table_model
-    if _table_model is not None:
-        return _table_model
-
-    model_path = getattr(settings, "yolo_table_model_path", "").strip()
-    if not model_path:
-        return None
-
-    path = Path(model_path)
-    if not path.exists():
-        logger.warning("Table model path does not exist: %s", path)
-        return None
-
-    try:
-        from ultralytics import YOLO as YOLOClass
-    except ImportError:
-        logger.warning("ultralytics not installed — table auto-detect will use contour fallback")
-        return None
-
-    try:
-        logger.info("Loading table detection model: %s", path)
-        _table_model = YOLOClass(str(path))
-    except Exception:
-        logger.exception("Failed to load table detection model: %s", path)
-        _table_model = None
-    return _table_model
 
 
 def _clamp_rect(rect: dict[str, float], width: int, height: int) -> RectBounds | None:
@@ -161,27 +129,27 @@ def _median_frame(frames: list[np.ndarray], size: tuple[int, int]) -> np.ndarray
 
 
 def _detect_with_yolo(frame: np.ndarray) -> list[tuple[float, RectBounds]]:
-    model = _load_table_model()
-    if model is None:
+    """Detect table regions using the already-loaded table-state model.
+
+    Previously this loaded a second model from ``settings.yolo_table_model_path``
+    — a config key that no longer exists, so this branch was silently dead and
+    every ROI suggestion fell through to the color/contour heuristics. It now
+    reuses ``iter_full_frame_detections`` (the same detector the live pipeline
+    runs), so every detected table region — regardless of clean/dirty/occupied
+    label — becomes a candidate box.
+    """
+    if not yolo_models.is_table_state_model_ready():
         return []
 
     try:
-        results = model(frame, verbose=False)
+        detections = yolo_models.iter_full_frame_detections(frame)
     except Exception:
         logger.exception("YOLO table detection failed")
         return []
 
-    if not results or not results[0].boxes:
-        return []
-
     rects: list[tuple[float, RectBounds]] = []
-    names = getattr(model, "names", {}) or {}
     frame_h, frame_w = frame.shape[:2]
-    for box in results[0].boxes:
-        class_name = str(names.get(int(box.cls), "")).lower()
-        if class_name and "table" not in class_name and "desk" not in class_name and "bench" not in class_name:
-            continue
-        x1, y1, x2, y2 = box.xyxy[0].tolist()
+    for x1, y1, x2, y2, detection in detections:
         rect = _clamp_rect(
             {"x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1},
             frame_w,
@@ -190,7 +158,7 @@ def _detect_with_yolo(frame: np.ndarray) -> list[tuple[float, RectBounds]]:
         if rect is None:
             continue
         expanded = _expand_rect(rect, frame_w, frame_h, x_ratio=0.18, y_ratio=0.18)
-        rects.append((float(box.conf), expanded or rect))
+        rects.append((float(detection.confidence), expanded or rect))
     return rects
 
 

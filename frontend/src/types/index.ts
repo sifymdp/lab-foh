@@ -97,6 +97,36 @@ export interface CameraSnapshotAnalysis {
   sceneDetections: CameraSceneDetection[]
 }
 
+export interface DraftTable {
+  number: string
+  capacity: number
+  type: TableType
+  shape: TableShape
+  sectionId: string
+  x: number
+  y: number
+  width: number
+  height: number
+  rotation: number
+  cameraUrl?: string | null
+  roiCoords?: RectBounds | null
+  confidence: number
+}
+
+export interface CameraLayoutPreview {
+  cameraUrl: string
+  frameWidth: number
+  frameHeight: number
+  method: string
+  previewImage: string
+  draftTables: DraftTable[]
+}
+
+export interface LayoutSuggestion {
+  cameras: CameraLayoutPreview[]
+  draftTables: DraftTable[]
+}
+
 export interface DiningSession {
   id: string
   tableId: string

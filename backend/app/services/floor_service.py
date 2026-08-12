@@ -4,9 +4,12 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.ids import new_id
 from app.models import DiningSession, Floor, Table
 from app.schemas.floor import FloorOut, RectBounds, TableOut
+from app.schemas.roi import DraftTableOut
 from app.seed import empty_floor_layout
+from app.socket_manager import emit_sync
 
 
 def _parse_roi(roi_coords: str | None) -> RectBounds | None:
@@ -130,6 +133,70 @@ def update_floor(db: Session, payload: FloorOut) -> FloorOut:
 
     db.commit()
     db.refresh(floor)
+    return floor_to_out(floor)
+
+
+def apply_detected_layout(
+    db: Session, drafts: list[DraftTableOut], replace: bool = True
+) -> FloorOut:
+    """Write camera-detected draft tables as real Table rows.
+
+    Unlike ``update_floor`` (which drops camera_url/roi_coords), this persists
+    both so each new table is immediately monitored by the camera pipeline.
+    ``replace=True`` clears the existing tables first — a fresh floor from the
+    camera; ``False`` adds the detected tables alongside what's already there.
+    """
+    floor = get_current_floor(db)
+    valid_sections = {s["id"] for s in (floor.sections or []) if isinstance(s, dict) and "id" in s}
+    fallback_section = next(iter(valid_sections), None)
+
+    if replace:
+        for table in list(floor.tables):
+            db.delete(table)
+        db.query(DiningSession).delete()
+        db.flush()
+
+    existing_numbers = {t.number for t in floor.tables} if not replace else set()
+
+    for draft in drafts:
+        section_id = draft.section_id if draft.section_id in valid_sections else fallback_section
+        number = draft.number
+        # Avoid colliding with an existing table number when adding.
+        if number in existing_numbers:
+            n = 1
+            while f"{number}-{n}" in existing_numbers:
+                n += 1
+            number = f"{number}-{n}"
+        existing_numbers.add(number)
+
+        roi_json = (
+            json.dumps(draft.roi_coords.model_dump()) if draft.roi_coords is not None else None
+        )
+        db.add(
+            Table(
+                id=new_id(),
+                floor_id=floor.id,
+                section_id=section_id,
+                number=number,
+                capacity=draft.capacity,
+                type=draft.type,
+                shape=draft.shape,
+                status="AVAILABLE",
+                x=draft.x,
+                y=draft.y,
+                width=draft.width,
+                height=draft.height,
+                rotation=draft.rotation,
+                camera_url=draft.camera_url,
+                roi_coords=roi_json,
+            )
+        )
+
+    db.commit()
+    db.refresh(floor)
+    # Tell every connected screen to reload the floor plan (new tables have new
+    # ids, so a per-table patch wouldn't add them client-side).
+    emit_sync("floor_updated", {"floorId": floor.id}, room=str(floor.id))
     return floor_to_out(floor)
 
 
