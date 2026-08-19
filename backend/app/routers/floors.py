@@ -7,7 +7,7 @@ from app.config import settings
 from app.core.deps import get_current_user, require_floor_editor
 from app.database import get_db
 from app.models.user import User
-from app.schemas.floor import FloorOut
+from app.schemas.floor import FloorOut, RectBounds
 from app.schemas.roi import (
     ApplyLayoutIn,
     CameraLayoutPreviewOut,
@@ -27,6 +27,23 @@ from app.services.floor_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/floors", tags=["floors"])
+
+
+def _section_bounds(section: dict) -> RectBounds | None:
+    """Bounding rectangle of a section polygon, so auto-detected tables can be
+    laid out inside the area staff designated rather than across the whole floor."""
+    points = section.get("points") if isinstance(section, dict) else None
+    if not points:
+        bounds = section.get("bounds") if isinstance(section, dict) else None
+        if isinstance(bounds, dict) and {"x", "y", "width", "height"} <= bounds.keys():
+            return RectBounds(**{k: bounds[k] for k in ("x", "y", "width", "height")})
+        return None
+    xs = [p["x"] for p in points if "x" in p]
+    ys = [p["y"] for p in points if "y" in p]
+    if not xs or not ys:
+        return None
+    x0, y0 = min(xs), min(ys)
+    return RectBounds(x=x0, y=y0, width=max(xs) - x0, height=max(ys) - y0)
 
 
 def _resolve_camera_urls(floor, requested: list[str] | None) -> list[str]:
@@ -86,6 +103,7 @@ def auto_detect_layout(
     if not sections:
         raise HTTPException(400, "Create at least one section before auto-detecting a layout.")
     section_id = sections[0]["id"]
+    target_region = _section_bounds(sections[0])
 
     camera_urls = _resolve_camera_urls(floor, body.camera_urls)
     if not camera_urls:
@@ -102,7 +120,8 @@ def auto_detect_layout(
     for url in camera_urls:
         try:
             result = layout_autodetect.detect_layout(
-                url, floor.width, floor.height, section_id, start_index=next_index
+                url, floor.width, floor.height, section_id,
+                start_index=next_index, target_region=target_region,
             )
         except ValueError as exc:
             logger.warning("Auto-detect failed for camera %s: %s", url, exc)

@@ -38,22 +38,42 @@ logger = logging.getLogger(__name__)
 _MIN_YOLO_BOXES = 2
 
 
+def _clamp(value: float, low: float, high: float) -> float:
+    if high < low:
+        return low
+    return max(low, min(value, high))
+
+
 def _guess_shape(width: float, height: float) -> str:
     aspect = width / height if height else 1.0
     return "CIRCLE" if 0.8 <= aspect <= 1.25 else "RECTANGLE"
 
 
-def _guess_capacity(canvas_area: float, floor_area: float) -> int:
-    """Rough capacity from how much of the floor the table occupies. Staff
-    adjust this in the confirm step; the goal is a sensible default, not truth."""
-    frac = canvas_area / floor_area if floor_area else 0.0
-    if frac < 0.020:
+def _guess_capacity(box_area: float, frame_area: float) -> int:
+    """Rough capacity from how much of the camera frame the table box covers.
+    Staff adjust this in the confirm step; the goal is a sensible default."""
+    frac = box_area / frame_area if frame_area else 0.0
+    if frac < 0.035:
         return 2
-    if frac < 0.045:
+    if frac < 0.080:
         return 4
-    if frac < 0.075:
+    if frac < 0.140:
         return 6
     return 8
+
+
+# Standard on-canvas table sizes by capacity — mirrors the sizes the manual
+# "Add table" flow uses, so an auto-detected floor looks like a hand-built one
+# instead of scaling the (often huge) raw detection box onto the canvas.
+_RECT_SIZE = {2: (76.0, 66.0), 4: (104.0, 76.0), 6: (134.0, 86.0), 8: (164.0, 96.0)}
+_CIRCLE_DIAM = {2: 64.0, 4: 88.0, 6: 108.0, 8: 124.0}
+
+
+def _standard_size(capacity: int, shape: str) -> tuple[float, float]:
+    if shape == "CIRCLE":
+        d = _CIRCLE_DIAM.get(capacity, 72.0)
+        return d, d
+    return _RECT_SIZE.get(capacity, (104.0, 76.0))
 
 
 def _annotated_preview(frame: np.ndarray, boxes: list[tuple[str, RectBounds]]) -> str:
@@ -80,8 +100,15 @@ def detect_layout(
     section_id: str,
     start_index: int = 1,
     max_frames: int = 30,
+    target_region: RectBounds | None = None,
 ) -> dict:
     """Detect tables from one camera and return draft tables + a preview.
+
+    Tables are laid out at standard sizes and spread across ``target_region``
+    (the designated section's bounds, when provided) preserving their detected
+    relative arrangement — rather than scaling the raw detection boxes straight
+    onto the canvas, which produced oversized, overlapping tables spilling
+    outside the section.
 
     Raises ValueError if the camera source can't be read (caller maps to 422).
     """
@@ -106,19 +133,55 @@ def detect_layout(
         if _is_reasonable_table_rect(rect, frame_w, frame_h)
     ]
 
-    scale_x = floor_width / frame_w if frame_w else 1.0
-    scale_y = floor_height / frame_h if frame_h else 1.0
-    floor_area = float(floor_width * floor_height)
+    frame_area = float(frame_w * frame_h)
+
+    # Target rectangle on the canvas to lay the tables into: the designated
+    # section (clamped to the canvas), otherwise the whole floor with a margin.
+    if target_region is not None:
+        rx = max(0.0, float(target_region.x))
+        ry = max(0.0, float(target_region.y))
+        rw = min(float(target_region.width), floor_width - rx)
+        rh = min(float(target_region.height), floor_height - ry)
+    else:
+        margin = 48.0
+        rx, ry = margin, margin
+        rw, rh = floor_width - 2 * margin, floor_height - 2 * margin
+    rw = max(rw, 120.0)
+    rh = max(rh, 120.0)
+
+    # Detected box centres in frame space, and their spread, so we can stretch
+    # the arrangement to fill the target region while keeping relative positions.
+    centers = [(r.x + r.width / 2.0, r.y + r.height / 2.0) for r in deduped]
+    xs = [c[0] for c in centers] or [0.0]
+    ys = [c[1] for c in centers] or [0.0]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    span_x = (max_x - min_x) or 1.0
+    span_y = (max_y - min_y) or 1.0
+
+    # Inner padding keeps tables off the section edge (half the largest table).
+    pad = 70.0
+    inner_w = max(rw - 2 * pad, 10.0)
+    inner_h = max(rh - 2 * pad, 10.0)
+    single = len(deduped) <= 1
 
     drafts: list[DraftTableOut] = []
     preview_boxes: list[tuple[str, RectBounds]] = []
     for i, rect in enumerate(deduped):
         number = f"T{start_index + i}"
-        # Map camera-pixel box → floor-canvas box (linear scale; straight-down).
-        cx = round(rect.x * scale_x, 1)
-        cy = round(rect.y * scale_y, 1)
-        cw = round(rect.width * scale_x, 1)
-        ch = round(rect.height * scale_y, 1)
+        shape = _guess_shape(rect.width, rect.height)
+        capacity = _guess_capacity(rect.width * rect.height, frame_area)
+        tw, th = _standard_size(capacity, shape)
+
+        # Position: map the detected centre into the target region, preserving
+        # the left-to-right / top-to-bottom arrangement the camera saw.
+        cxn = 0.5 if single else (centers[i][0] - min_x) / span_x
+        cyn = 0.5 if single else (centers[i][1] - min_y) / span_y
+        center_x = rx + pad + cxn * inner_w
+        center_y = ry + pad + cyn * inner_h
+        x = _clamp(center_x - tw / 2.0, 0.0, floor_width - tw)
+        y = _clamp(center_y - th / 2.0, 0.0, floor_height - th)
+
         # The detected box itself is the ROI, in raw-camera coordinates — the
         # exact space the monitoring pipeline matches detections against — so a
         # newly-created table is camera-monitored with zero extra setup.
@@ -129,11 +192,11 @@ def detect_layout(
         drafts.append(
             DraftTableOut(
                 number=number,
-                capacity=_guess_capacity(cw * ch, floor_area),
+                capacity=capacity,
                 type="STANDARD",
-                shape=_guess_shape(cw, ch),
+                shape=shape,
                 section_id=section_id,
-                x=cx, y=cy, width=cw, height=ch,
+                x=round(x, 1), y=round(y, 1), width=tw, height=th,
                 rotation=0.0,
                 camera_url=camera_url,
                 roi_coords=roi,
