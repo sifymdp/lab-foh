@@ -120,6 +120,19 @@ def resolve_alert(db: Session, event_id: str) -> dict[str, str | bool]:
     return {"id": event_id, "resolved": True}
 
 
+def reopen_alert(db: Session, event_id: str) -> dict[str, str | bool]:
+    """Un-resolve an alert — recovers one dismissed by mistake, moving it back
+    to the active list. The event is never deleted, so this is always possible."""
+    event = db.get(AIEvent, event_id)
+    if not event:
+        from fastapi import HTTPException, status
+
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
+    event.resolved = False
+    db.commit()
+    return {"id": event_id, "resolved": False}
+
+
 def seating_suggest(db: Session, party_size: int) -> str:
     from app.models import Table
 

@@ -105,8 +105,13 @@ export function AppShell() {
 
   useEffect(() => {
     const onDismissed = () => setAlertCount((c) => Math.max(0, c - 1))
+    const onRestored = () => setAlertCount((c) => c + 1)
     window.addEventListener('foh:alert-dismissed', onDismissed)
-    return () => window.removeEventListener('foh:alert-dismissed', onDismissed)
+    window.addEventListener('foh:alert-restored', onRestored)
+    return () => {
+      window.removeEventListener('foh:alert-dismissed', onDismissed)
+      window.removeEventListener('foh:alert-restored', onRestored)
+    }
   }, [])
 
   const showNavItem = (item: typeof NAV[number]) => {

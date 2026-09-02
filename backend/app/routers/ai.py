@@ -45,6 +45,16 @@ def resolve_event(
     return ai_service.resolve_alert(db, event_id)
 
 
+@router.patch("/events/{event_id}/reopen")
+def reopen_event(
+    event_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """Undo a dismissal — move a resolved alert back to active."""
+    return ai_service.reopen_alert(db, event_id)
+
+
 @router.post("/seating-suggest", response_model=SeatingResponse)
 def seating_suggest(
     body: SeatingSuggestIn,
