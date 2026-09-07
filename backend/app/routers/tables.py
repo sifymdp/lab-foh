@@ -83,6 +83,16 @@ def _resolve_roi_label_from_scene(
     return best_label, best_confidence
 
 
+@router.get("/available", response_model=list[TableOut])
+def available_tables(
+    party_size: int = 1,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> list[TableOut]:
+    """Available tables that seat the party, best-fit (least wasted seats) first."""
+    return table_service.find_available_tables(db, party_size)
+
+
 @router.get("/{table_id}/qr")
 def table_qr_page(table_id: str, db: Session = Depends(get_db)) -> HTMLResponse:
     qr = (

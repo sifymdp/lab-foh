@@ -224,6 +224,11 @@ export const api = {
     return apiFetch('/sessions')
   },
 
+  findAvailableTables(partySize: number): Promise<Table[]> {
+    if (USE_MOCK) return Promise.resolve([])
+    return apiFetch(`/tables/available?party_size=${partySize}`)
+  },
+
   getUsers(): Promise<User[]> {
     if (USE_MOCK) return mock.mockGetUsers()
     return apiFetch('/users')

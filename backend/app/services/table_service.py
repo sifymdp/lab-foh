@@ -84,10 +84,43 @@ def record_history(
     )
 
 
+def find_available_tables(db: Session, party_size: int) -> list[TableOut]:
+    """Available tables that seat at least ``party_size``, best-fit first.
+
+    Best-fit = the smallest-capacity table that still fits, so a party of 2
+    isn't handed an 8-top while smaller tables sit empty. Ties break by table
+    number for a stable, predictable order.
+    """
+    size = max(party_size, 1)
+    tables = (
+        db.query(Table)
+        .filter(Table.status == "AVAILABLE", Table.capacity >= size)
+        .all()
+    )
+
+    def sort_key(t: Table):
+        try:
+            num = int(t.number)
+        except (TypeError, ValueError):
+            num = 10**9
+        return (t.capacity, num, str(t.number))
+
+    tables.sort(key=sort_key)
+    return [_table_to_out(t) for t in tables]
+
+
 def update_table(db: Session, table_id: str, patch: TablePatchIn) -> TableOut:
     table = get_table(db, table_id)
     data = patch.model_dump(exclude_unset=True, by_alias=False)
     old_status = table.status
+    # Enforce the status machine on this general-purpose update path too, so a
+    # direct table PUT can't bypass it and jump a table into an invalid state.
+    if "status" in data and data["status"] != old_status:
+        if not is_valid_transition(old_status, data["status"]):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid transition from {old_status} to {data['status']}",
+            )
     if "roi_coords" in data:
         # roi_coords arrives as a dict (or None) from the RectBounds schema field,
         # but the DB column stores it as a JSON string — convert before saving.

@@ -112,13 +112,16 @@ def update_floor(db: Session, payload: FloorOut) -> FloorOut:
             db.delete(table)
 
     for t in payload.tables:
+        # Layout-only fields. Status is deliberately NOT set here: a bulk floor
+        # save is a layout edit and must not change a table's lifecycle state
+        # (that only happens through the seat/status flows, which enforce the
+        # status machine). This closes a transition-validation bypass.
         data = {
             "section_id": t.section_id,
             "number": t.number,
             "capacity": t.capacity,
             "type": t.type,
             "shape": t.shape,
-            "status": t.status,
             "x": t.x,
             "y": t.y,
             "width": t.width,
@@ -129,7 +132,8 @@ def update_floor(db: Session, payload: FloorOut) -> FloorOut:
             for key, val in data.items():
                 setattr(existing[t.id], key, val)
         else:
-            db.add(Table(id=t.id, floor_id=floor.id, **data))
+            # New tables always start AVAILABLE, regardless of payload.
+            db.add(Table(id=t.id, floor_id=floor.id, status="AVAILABLE", **data))
 
     db.commit()
     db.refresh(floor)
