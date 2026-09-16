@@ -155,6 +155,8 @@ export const aiApi = {
     apiFetch<AIEvent[]>(`/ai/events?resolved=${resolved}`),
   resolveAlert: (id: string) =>
     apiFetch<{ id: string; resolved: boolean }>(`/ai/events/${id}/resolve`, { method: 'PATCH' }),
+  reopenAlert: (id: string) =>
+    apiFetch<{ id: string; resolved: boolean }>(`/ai/events/${id}/reopen`, { method: 'PATCH' }),
   getShiftReport: (date?: string) =>
     apiFetch<ShiftReport>(`/ai/reports/shift${date ? `?date=${date}` : ''}`),
 }

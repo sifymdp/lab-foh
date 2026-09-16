@@ -89,12 +89,16 @@ export function FloorProvider({ children }: { children: ReactNode }) {
       const session = payload as DiningSession
       setSessions((prev) => (prev.some((s) => s.id === session.id) ? prev : [...prev, session]))
     })
+    // A bulk layout change (e.g. auto-detect apply) creates tables with new ids
+    // a per-table patch can't add — reload the whole floor on every screen.
+    const unsubFloor = on('floor_updated', () => { void refresh() })
     return () => {
       unsubTable()
       unsubTableLegacy()
       unsubSession()
+      unsubFloor()
     }
-  }, [on])
+  }, [on, refresh])
 
   const updateTable = useCallback(
     async (tableId: string, patch: Partial<Table>) => {

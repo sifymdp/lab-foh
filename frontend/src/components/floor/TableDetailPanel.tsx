@@ -168,6 +168,30 @@ export function TableDetailPanel({ floor, table, onClose, onSeatGuests }: TableD
                 </select>
               </dd>
             </div>
+            <div>
+              <dt>Rotation</dt>
+              <dd>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button
+                    type="button" className="btn btn-secondary btn-sm" title="Rotate 15° left"
+                    onClick={() => updateTable(table.id, { rotation: (((table.rotation - 15) % 360) + 360) % 360 })}
+                  >⟲</button>
+                  <span style={{ minWidth: 46, textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontSize: 13 }}>
+                    {Math.round(table.rotation)}°
+                  </span>
+                  <button
+                    type="button" className="btn btn-secondary btn-sm" title="Rotate 15° right"
+                    onClick={() => updateTable(table.id, { rotation: (((table.rotation + 15) % 360) + 360) % 360 })}
+                  >⟳</button>
+                  {table.rotation !== 0 && (
+                    <button
+                      type="button" className="btn btn-ghost btn-sm"
+                      onClick={() => updateTable(table.id, { rotation: 0 })}
+                    >Reset</button>
+                  )}
+                </div>
+              </dd>
+            </div>
           </>
         )}
         {session && (

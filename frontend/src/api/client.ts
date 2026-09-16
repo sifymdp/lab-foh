@@ -9,7 +9,9 @@ import type {
   CreateTablePayload,
   CreateUserPayload,
   DiningSession,
+  DraftTable,
   Floor,
+  LayoutSuggestion,
   LoginResponse,
   RectBounds,
   SeatGuestPayload,
@@ -222,6 +224,11 @@ export const api = {
     return apiFetch('/sessions')
   },
 
+  findAvailableTables(partySize: number): Promise<Table[]> {
+    if (USE_MOCK) return Promise.resolve([])
+    return apiFetch(`/tables/available?party_size=${partySize}`)
+  },
+
   getUsers(): Promise<User[]> {
     if (USE_MOCK) return mock.mockGetUsers()
     return apiFetch('/users')
@@ -292,5 +299,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ roiCoords: roiCoords ?? null }),
     })
+  },
+
+  autoDetectLayout(cameraUrls?: string[]): Promise<LayoutSuggestion> {
+    return apiFetch<LayoutSuggestion>('/floors/current/auto-detect-layout', {
+      method: 'POST',
+      body: JSON.stringify({ cameraUrls: cameraUrls ?? null }),
+    })
+  },
+
+  applyDetectedLayout(tables: DraftTable[], replace: boolean): Promise<Floor> {
+    return apiFetch<Floor & { sections?: ApiSection[] }>('/floors/current/apply-layout', {
+      method: 'POST',
+      body: JSON.stringify({ tables, replace }),
+    }).then(normalizeFloor)
   },
 }

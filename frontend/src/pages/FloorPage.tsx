@@ -6,6 +6,7 @@ import { canEditFloor } from '../lib/permissions'
 import { computeFloorStats } from '../lib/floorStats'
 import { newLabel, newSection } from '../lib/floorTemplates'
 import { AddTableModal } from '../components/floor/AddTableModal'
+import { AutoDetectLayoutModal } from '../components/floor/AutoDetectLayoutModal'
 import { FloorLayoutToolbar, LayoutEditorPanel } from '../components/floor/LayoutEditorPanel'
 import type { CanvasSelection } from '../components/floor/FloorPlanCanvas'
 import { FloorPlanCanvas } from '../components/floor/FloorPlanCanvas'
@@ -33,6 +34,7 @@ export function FloorPage() {
   } = useFloor()
   const [selection, setSelection] = useState<CanvasSelection>(null)
   const [showAddTable, setShowAddTable] = useState(false)
+  const [showAutoDetect, setShowAutoDetect] = useState(false)
   const [seatTable, setSeatTable] = useState<Table | null>(null)
   const [showSeatingSuggest, setShowSeatingSuggest] = useState(false)
   const [myTablesOnly, setMyTablesOnly] = useState(false)
@@ -168,6 +170,11 @@ export function FloorPage() {
             </button>
           )}
           {editable && (
+            <button type="button" className="btn btn-secondary" onClick={() => setShowAutoDetect(true)}>
+              ✨ Auto-detect layout
+            </button>
+          )}
+          {editable && (
             <button type="button" className="btn btn-primary" onClick={() => setShowAddTable(true)}>
               + Add table
             </button>
@@ -238,6 +245,9 @@ export function FloorPage() {
             setSelection({ type: 'table', id: t.id })
           }}
         />
+      )}
+      {showAutoDetect && (
+        <AutoDetectLayoutModal floor={floor} onClose={() => setShowAutoDetect(false)} />
       )}
       {showSeatingSuggest && <SeatingSuggestModal onClose={() => setShowSeatingSuggest(false)} />}
       <ConfirmDialog
